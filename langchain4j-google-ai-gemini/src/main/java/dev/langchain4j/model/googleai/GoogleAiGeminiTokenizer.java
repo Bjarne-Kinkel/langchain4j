@@ -1,6 +1,5 @@
 package dev.langchain4j.model.googleai;
 
-import com.google.gson.Gson;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
@@ -9,10 +8,7 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.Tokenizer;
 import lombok.Builder;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.ResponseBody;
-import retrofit2.Call;
 
-import java.io.IOException;
 import java.time.Duration;
 import java.util.LinkedList;
 import java.util.List;
@@ -25,8 +21,6 @@ import static java.util.Collections.singletonList;
 
 @Slf4j
 public class GoogleAiGeminiTokenizer implements Tokenizer {
-    private static final Gson GSON = new Gson();
-
     private final GeminiService geminiService;
     private final String modelName;
     private final String apiKey;
@@ -43,8 +37,10 @@ public class GoogleAiGeminiTokenizer implements Tokenizer {
         this.modelName = ensureNotBlank(modelName, "modelName");
         this.apiKey = ensureNotBlank(apiKey, "apiKey");
         this.maxRetries = getOrDefault(maxRetries, 3);
-        this.geminiService = GeminiService.getGeminiService(logRequestsAndResponses ? log : null,
-            timeout != null ? timeout : Duration.ofSeconds(60));
+        this.geminiService = new GeminiService(
+                logRequestsAndResponses ? log : null,
+                timeout != null ? timeout : Duration.ofSeconds(60)
+        );
     }
 
     @Override
@@ -103,26 +99,12 @@ public class GoogleAiGeminiTokenizer implements Tokenizer {
     }
 
     private int estimateTokenCount(GeminiCountTokensRequest countTokensRequest) {
-        Call<GeminiCountTokensResponse> responseCall =
-            withRetry(() -> this.geminiService.countTokens(this.modelName, this.apiKey, countTokensRequest), this.maxRetries);
-
         GeminiCountTokensResponse countTokensResponse;
         try {
-            retrofit2.Response<GeminiCountTokensResponse> executed = responseCall.execute();
-            countTokensResponse = executed.body();
-
-            if (executed.code() >= 300) {
-                try (ResponseBody errorBody = executed.errorBody()) {
-                    GeminiError error = GSON.fromJson(errorBody.string(), GeminiErrorContainer.class).getError();
-
-                    throw new RuntimeException(
-                        String.format("%s (code %d) %s", error.getStatus(), error.getCode(), error.getMessage()));
-                }
-            }
-        } catch (IOException e) {
-            throw new RuntimeException("An error occurred when calling the Gemini API endpoint to calculate tokens count", e);
+            countTokensResponse = withRetry(() ->this.geminiService.countTokens(this.modelName, this.apiKey, countTokensRequest), this.maxRetries);
+        }catch (RuntimeException e){
+            throw new RuntimeException("An error occurred when calling the Gemini API endpoint to calculate tokens count.", e);
         }
-
         return countTokensResponse.getTotalTokens();
     }
 }
