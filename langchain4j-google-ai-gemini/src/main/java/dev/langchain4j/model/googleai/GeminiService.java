@@ -10,6 +10,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.io.IOException;
+import java.util.stream.Stream;
 
 class GeminiService {
     private static final String GEMINI_AI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
@@ -48,6 +49,11 @@ class GeminiService {
         return sendRequest(url, apiKey, request, GoogleAiBatchEmbeddingResponse.class);
     }
 
+    public Stream<GeminiGenerateContentResponse> generateContentStream(String modelName, String apiKey, GeminiGenerateContentRequest request) throws InterruptedException, IOException {
+        String url = String.format("%s/models/%s:streamGenerateContent?alt=sse", GEMINI_AI_ENDPOINT, modelName);
+        return streamRequest(url, apiKey, request, GeminiGenerateContentResponse.class);
+    }
+
     private <T> T sendRequest(String url, String apiKey, Object requestBody, Class<T> responseType) throws IOException {
         String jsonBody = gson.toJson(requestBody);
 
@@ -80,5 +86,32 @@ class GeminiService {
         }
 
         return gson.fromJson(response.body(), responseType);
+    }
+
+    private <T> Stream<T> streamRequest(String url, String apiKey, Object requestBody, Class<T> responseType) throws IOException, InterruptedException {
+        String jsonBody = gson.toJson(requestBody);
+
+        HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "LangChain4j")
+                .header(API_KEY_HEADER_NAME, apiKey)
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .build();
+
+        if (logger != null) {
+            logger.debug("Sending request to Gemini:\n{}", jsonBody);
+        }
+
+        Stream<T> responseStream = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofLines()).body()
+                .filter(line -> line.startsWith("data: "))
+                .map(line -> line.substring(6)) // Remove "data: " prefix
+                .map(jsonString -> gson.fromJson(jsonString, responseType));
+
+        if(logger != null){
+            responseStream = responseStream.peek(response -> logger.debug("Partial response from gemini:\n{}", response));
+        }
+
+        return responseStream;
     }
 }
